@@ -1,0 +1,6 @@
+{
+  "name": "KaryoOS — Android Virtual Workspace & AI Agent",
+  "description": "Autonomous mobile AI agent architecture and interactive workbench combining an Android sandboxed virtual workspace, AccessibilityService controller, and multi-provider Gemini + OpenRouter brain router.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

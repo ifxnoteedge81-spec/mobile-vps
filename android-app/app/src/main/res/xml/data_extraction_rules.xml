@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="karyo_encrypted_vault.xml" />
+        <exclude domain="file" path="agent_workspace" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="karyo_encrypted_vault.xml" />
+    </device-transfer>
+</data-extraction-rules>

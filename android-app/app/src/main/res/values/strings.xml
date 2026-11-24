@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">KaryoOS Agent</string>
+    <string name="accessibility_service_label">KaryoOS Virtual Limbs Service</string>
+    <string name="accessibility_service_description">Allows the KaryoOS autonomous agent to observe active UI hierarchy nodes and perform user-approved taps, scrolling, and form input when active.</string>
+    <string name="notification_channel_agent">Autonomous Agent Execution</string>
+    <string name="notification_channel_agent_desc">Notifications for active agent tasks and scheduled WorkManager routines.</string>
+</resources>
