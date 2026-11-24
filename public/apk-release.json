@@ -1,0 +1,10 @@
+{
+  "packageId": "com.virtualos.agent",
+  "fileName": "KaryoOS-Agent.apk",
+  "versionTag": "v1.0",
+  "hasLocalApk": false,
+  "apkPath": "",
+  "apkSizeBytes": 0,
+  "githubRepo": "",
+  "releaseApkUrl": ""
+}

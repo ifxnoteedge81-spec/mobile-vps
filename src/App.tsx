@@ -1,11 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import JSZip from "jszip";
 import {
   AgentActionType,
   AgentPhase,
   AgentRunStatus,
   AgentStepPlan,
-  AndroidSourceFile,
   CredentialEntry,
   ExecutionLogEntry,
   GeminiAccountSlot,
@@ -43,10 +41,10 @@ import { VirtualLimbView } from "./components/AndroidDevicePreview";
 import { WorkspaceAndRouterTab } from "./components/WorkspaceAndRouterTab";
 import { VaultAndQueueTab } from "./components/VaultAndQueueTab";
 import { SettingsTab } from "./components/SettingsTab";
-import { ApkAndCodeTab } from "./components/ApkAndCodeTab";
-import { Download } from "lucide-react";
+import { ApkDownloadPage } from "./components/ApkDownloadPage";
+import { Settings } from "lucide-react";
 
-type MainTab = "console" | "workspace" | "vault" | "settings" | "apk";
+type MainTab = "console" | "workspace" | "vault" | "settings";
 
 function nowTime(): string {
   return new Date().toLocaleTimeString([], {
@@ -83,6 +81,21 @@ function hashPin(pin: string): string {
 }
 
 export default function App() {
+  const isDownloadPortal =
+    import.meta.env.VITE_SITE_MODE === "download" ||
+    (typeof window !== "undefined" &&
+      (window.location.pathname === "/download" ||
+        window.location.pathname === "/apk" ||
+        window.location.pathname === "/download.html"));
+
+  if (isDownloadPortal) {
+    return <ApkDownloadPage />;
+  }
+
+  return <WorkbenchApp />;
+}
+
+function WorkbenchApp() {
   const [activeTab, setActiveTab] = useState<MainTab>("console");
   const [commandInput, setCommandInput] = useState<string>("");
 
@@ -146,11 +159,6 @@ export default function App() {
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>(() =>
     loadStored("karyo_scheduled_tasks", INITIAL_SCHEDULED_TASKS)
   );
-
-  // Android Project Explorer State
-  const [androidFiles, setAndroidFiles] = useState<AndroidSourceFile[]>([]);
-  const [androidLoading, setAndroidLoading] = useState<boolean>(true);
-  const [androidError, setAndroidError] = useState<string | null>(null);
 
   // Refs for async loop coordination
   const statusRef = useRef<AgentRunStatus>("IDLE");
@@ -218,35 +226,6 @@ export default function App() {
   useEffect(() => {
     activeAppRef.current = activeAppKey;
   }, [activeAppKey]);
-
-  // Load Android codebase (supports Express API and static Netlify /android-project.json)
-  useEffect(() => {
-    let mounted = true;
-    async function loadProjectFiles() {
-      try {
-        let res = await fetch("/api/android-project/files");
-        const contentType = res.headers.get("content-type") || "";
-        if (!res.ok || !contentType.includes("application/json")) {
-          res = await fetch("/android-project.json");
-        }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (mounted) {
-          setAndroidFiles(data.files ?? []);
-          setAndroidLoading(false);
-        }
-      } catch (err) {
-        if (mounted) {
-          setAndroidError(err instanceof Error ? err.message : "Failed to load files");
-          setAndroidLoading(false);
-        }
-      }
-    }
-    loadProjectFiles();
-    return () => {
-      mounted = false;
-    };
-  }, []);
 
   const appendLog = useCallback(
     (phase: AgentPhase, title: string, detail: string, providerMeta?: string) => {
@@ -342,22 +321,6 @@ export default function App() {
     setVideoState(nextVideo);
     setActiveLimbView("video");
     appendLog("MEDIA", "Video Attached", `${file.name} (${sizeMb.toFixed(2)} MB) ready for Media3 edits.`);
-  };
-
-  const handleExportZip = async () => {
-    if (androidFiles.length === 0) return;
-    const zip = new JSZip();
-    const rootFolder = zip.folder("KaryoOSAgent-Android");
-    androidFiles.forEach((file) => {
-      rootFolder?.file(file.path, file.content);
-    });
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "KaryoOSAgent-Android.zip";
-    anchor.click();
-    URL.revokeObjectURL(url);
   };
 
   const requestGuardrailApproval = (request: GuardrailRequest): Promise<boolean> => {
@@ -1237,8 +1200,6 @@ export default function App() {
               { id: "console", label: "Console" },
               { id: "workspace", label: "Workspace" },
               { id: "vault", label: "Vault & Memory" },
-              { id: "settings", label: "Settings" },
-              { id: "apk", label: "APK & Code" },
             ].map((item) => (
               <button
                 key={item.id}
@@ -1258,12 +1219,15 @@ export default function App() {
           <div className="shrink-0">
             <button
               type="button"
-              onClick={handleExportZip}
-              disabled={androidFiles.length === 0}
-              className="px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-xs font-semibold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0"
+              onClick={() => setActiveTab("settings")}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 ${
+                activeTab === "settings"
+                  ? "bg-teal-700 text-white"
+                  : "bg-slate-900 hover:bg-slate-800 text-white"
+              }`}
             >
-              <Download className="w-3.5 h-3.5" />
-              Export Android ZIP
+              <Settings className="w-3.5 h-3.5" />
+              Settings
             </button>
           </div>
         </div>
@@ -1409,15 +1373,6 @@ export default function App() {
             onUpdateSkillPolicy={setSkillPolicy}
             hasPrivacyPin={Boolean(privacyPinHash)}
             onSetPrivacyPin={handleSetPrivacyPin}
-          />
-        )}
-
-        {activeTab === "apk" && (
-          <ApkAndCodeTab
-            files={androidFiles}
-            loading={androidLoading}
-            error={androidError}
-            onExportZip={handleExportZip}
           />
         )}
       </main>
