@@ -17,16 +17,18 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Production Multi-Key + Multi-Model Cascade Router:
+ * Universal Multi-Provider Cascade Router:
  * - Rotates across 5+ Free Gemini API keys (separate Gmail accounts) using LRU + round-robin.
- * - Uses 1 single OpenRouter API key to cascade across all configured OpenRouter `:free` models.
- * - Tracks per-(keyId + modelId) cooldowns independently so a 429 on one OpenRouter free model
- *   never blocks the other free models on the same OpenRouter key.
+ * - Cascades OpenRouter across all configured `:free` models with per-model cooldowns.
+ * - Seamlessly supports & fails over across OpenAI, Anthropic Claude, Groq, DeepSeek, Mistral,
+ *   and ANY Custom OpenAI-Compatible endpoint (xAI, Ollama, vLLM, Together, etc.).
  */
 class BrainRouter(
     private val vaultStore: EncryptedVaultStore,
     private val geminiClient: GeminiClient,
-    private val openRouterClient: OpenRouterClient
+    private val openRouterClient: OpenRouterClient,
+    private val universalOpenAiClient: UniversalOpenAiClient,
+    private val anthropicClient: AnthropicClient
 ) {
     private val routeMutex = Mutex()
     private val geminiRoundRobinCursor = AtomicInteger(0)
@@ -44,14 +46,14 @@ class BrainRouter(
 
         if (allKeys.isEmpty()) {
             return Result.failure(
-                IllegalStateException("No API keys configured. Add up to 5 free Gemini keys and/or 1 OpenRouter key in Brain Settings.")
+                IllegalStateException("No API keys configured. Open Settings to add Gemini, OpenRouter, OpenAI, Claude, Groq, DeepSeek, Mistral, or Custom AI keys.")
             )
         }
 
         val candidates = buildCandidateChain(allKeys, config, now)
         if (candidates.isEmpty()) {
             return Result.failure(
-                IllegalStateException("All configured Gemini keys & OpenRouter free models are currently cooling down. Reset cooldowns or wait.")
+                IllegalStateException("All configured AI routes are currently cooling down. Reset cooldowns or wait.")
             )
         }
 
@@ -71,10 +73,7 @@ class BrainRouter(
             }
             previousRouteLabel = currentRouteLabel
 
-            val result = when (candidate.provider) {
-                AiProvider.GEMINI -> geminiClient.generate(candidate.key.apiKey, candidate.modelId, request)
-                AiProvider.OPENROUTER -> openRouterClient.generate(candidate.key.apiKey, candidate.modelId, request)
-            }
+            val result = invokeCandidate(candidate.provider, candidate.key, candidate.modelId, request)
 
             when (result) {
                 is BrainCallResult.Success -> {
@@ -98,7 +97,6 @@ class BrainRouter(
                     val rKey = routeKey(candidate.key.id, candidate.modelId)
 
                     if (candidate.provider == AiProvider.OPENROUTER && !result.isAuthError) {
-                        // Cool down ONLY this specific free model so the same OpenRouter key can try other :free models immediately!
                         val modelCooldownMs = if (result.isRateLimitOrQuota) {
                             config.modelCooldownSeconds * 1000L
                         } else {
@@ -127,6 +125,51 @@ class BrainRouter(
         Result.failure(RuntimeException("BrainRouter exhausted ${candidates.size} routes. Last error: $lastError"))
     }
 
+    suspend fun testSingleKey(keyId: String): RouteDiagnosticResult {
+        val key = vaultStore.apiKeys.value.firstOrNull { it.id == keyId }
+            ?: return RouteDiagnosticResult(
+                provider = AiProvider.GEMINI,
+                keyLabel = "Missing Key",
+                modelId = "-",
+                ok = false,
+                latencyMs = 0L,
+                message = "Connector not found in EncryptedVaultStore."
+            )
+        val config = vaultStore.routerConfig.value
+        val modelId = resolveModelForKey(key, config)
+        val probeReq = BrainRequest(
+            systemInstruction = "Reply with JSON {\"ok\":true}",
+            userPrompt = "Ping",
+            jsonMode = true,
+            maxTokens = 32
+        )
+        return when (val res = invokeCandidate(key.provider, key, modelId, probeReq)) {
+            is BrainCallResult.Success -> {
+                vaultStore.markKeySuccess(key.id)
+                RouteDiagnosticResult(
+                    provider = key.provider,
+                    keyLabel = key.label,
+                    modelId = modelId,
+                    ok = true,
+                    latencyMs = res.latencyMs,
+                    message = "Connected cleanly (${key.provider.envVarName})",
+                    keyId = key.id,
+                    envVarName = key.provider.envVarName
+                )
+            }
+            is BrainCallResult.Failure -> RouteDiagnosticResult(
+                provider = key.provider,
+                keyLabel = key.label,
+                modelId = modelId,
+                ok = false,
+                latencyMs = 0L,
+                message = res.message,
+                keyId = key.id,
+                envVarName = key.provider.envVarName
+            )
+        }
+    }
+
     suspend fun testAllConfiguredRoutes(): List<RouteDiagnosticResult> {
         val allKeys = vaultStore.apiKeys.value.filter { it.enabled && it.apiKey.isNotBlank() }
         val config = vaultStore.routerConfig.value
@@ -140,14 +183,17 @@ class BrainRouter(
 
         val primaryGeminiModel = config.geminiModels.firstOrNull() ?: "gemini-2.5-flash"
         allKeys.filter { it.provider == AiProvider.GEMINI }.forEach { key ->
-            val res = geminiClient.generate(key.apiKey, primaryGeminiModel, probeReq)
+            val modelId = key.modelOverride.ifBlank { primaryGeminiModel }
+            val res = geminiClient.generate(key.apiKey, modelId, probeReq)
             diagnostics.add(
                 when (res) {
                     is BrainCallResult.Success -> RouteDiagnosticResult(
-                        AiProvider.GEMINI, key.label, primaryGeminiModel, true, res.latencyMs, "Healthy"
+                        AiProvider.GEMINI, key.label, modelId, true, res.latencyMs, "Healthy",
+                        keyId = key.id, envVarName = "GEMINI_API_KEY"
                     )
                     is BrainCallResult.Failure -> RouteDiagnosticResult(
-                        AiProvider.GEMINI, key.label, primaryGeminiModel, false, 0L, res.message
+                        AiProvider.GEMINI, key.label, modelId, false, 0L, res.message,
+                        keyId = key.id, envVarName = "GEMINI_API_KEY"
                     )
                 }
             )
@@ -161,15 +207,35 @@ class BrainRouter(
                 diagnostics.add(
                     when (res) {
                         is BrainCallResult.Success -> RouteDiagnosticResult(
-                            AiProvider.OPENROUTER, primaryOrKey.label, freeModel, true, res.latencyMs, "Healthy"
+                            AiProvider.OPENROUTER, primaryOrKey.label, freeModel, true, res.latencyMs, "Healthy",
+                            keyId = primaryOrKey.id, envVarName = "OPENROUTER_API_KEY"
                         )
                         is BrainCallResult.Failure -> RouteDiagnosticResult(
-                            AiProvider.OPENROUTER, primaryOrKey.label, freeModel, false, 0L, res.message
+                            AiProvider.OPENROUTER, primaryOrKey.label, freeModel, false, 0L, res.message,
+                            keyId = primaryOrKey.id, envVarName = "OPENROUTER_API_KEY"
                         )
                     }
                 )
             }
         }
+
+        allKeys.filter { it.provider != AiProvider.GEMINI && it.provider != AiProvider.OPENROUTER }
+            .forEach { key ->
+                val modelId = resolveModelForKey(key, config)
+                val res = invokeCandidate(key.provider, key, modelId, probeReq)
+                diagnostics.add(
+                    when (res) {
+                        is BrainCallResult.Success -> RouteDiagnosticResult(
+                            key.provider, key.label, modelId, true, res.latencyMs, "Healthy",
+                            keyId = key.id, envVarName = key.provider.envVarName
+                        )
+                        is BrainCallResult.Failure -> RouteDiagnosticResult(
+                            key.provider, key.label, modelId, false, 0L, res.message,
+                            keyId = key.id, envVarName = key.provider.envVarName
+                        )
+                    }
+                )
+            }
 
         return diagnostics
     }
@@ -179,6 +245,39 @@ class BrainRouter(
         vaultStore.resetAllCooldowns()
     }
 
+    private suspend fun invokeCandidate(
+        provider: AiProvider,
+        key: ApiKeyEntry,
+        modelId: String,
+        request: BrainRequest
+    ): BrainCallResult {
+        return when (provider) {
+            AiProvider.GEMINI -> geminiClient.generate(key.apiKey, modelId, request)
+            AiProvider.OPENROUTER -> openRouterClient.generate(key.apiKey, modelId, request)
+            AiProvider.ANTHROPIC -> anthropicClient.generate(key.apiKey, modelId, request)
+            AiProvider.OPENAI,
+            AiProvider.GROQ,
+            AiProvider.DEEPSEEK,
+            AiProvider.MISTRAL,
+            AiProvider.CUSTOM_OPENAI -> universalOpenAiClient.generate(
+                provider = provider,
+                apiKey = key.apiKey,
+                baseUrl = key.customBaseUrl.ifBlank { provider.defaultBaseUrl },
+                modelId = modelId,
+                request = request
+            )
+        }
+    }
+
+    private fun resolveModelForKey(key: ApiKeyEntry, config: BrainRouterConfig): String {
+        if (key.modelOverride.isNotBlank()) return key.modelOverride
+        return when (key.provider) {
+            AiProvider.GEMINI -> config.geminiModels.firstOrNull() ?: AiProvider.GEMINI.defaultModel
+            AiProvider.OPENROUTER -> config.openRouterFreeModels.firstOrNull() ?: AiProvider.OPENROUTER.defaultModel
+            else -> key.provider.defaultModel
+        }
+    }
+
     private fun buildCandidateChain(
         allKeys: List<ApiKeyEntry>,
         config: BrainRouterConfig,
@@ -186,24 +285,26 @@ class BrainRouter(
     ): List<RouteCandidate> {
         val geminiKeys = orderGeminiKeysLru(allKeys.filter { it.provider == AiProvider.GEMINI }, nowMs)
         val openRouterKeys = allKeys.filter { it.provider == AiProvider.OPENROUTER }
+        val universalKeys = allKeys.filter {
+            it.provider != AiProvider.GEMINI && it.provider != AiProvider.OPENROUTER
+        }
 
         val geminiModels = config.geminiModels.ifEmpty { listOf("gemini-2.5-flash") }
         val openRouterModels = config.openRouterFreeModels.ifEmpty { listOf("google/gemini-2.0-flash-exp:free") }
 
         val geminiCandidates = mutableListOf<RouteCandidate>()
-        // Rotate across all 5 Gemini keys on primary model first, then try secondary Gemini free models
         for (modelId in geminiModels) {
             for (key in geminiKeys) {
-                val rKey = routeKey(key.id, modelId)
+                val effectiveModel = key.modelOverride.ifBlank { modelId }
+                val rKey = routeKey(key.id, effectiveModel)
                 val modelWait = routeCooldownMap[rKey] ?: 0L
                 if (key.cooldownUntilEpochMs <= nowMs && modelWait <= nowMs) {
-                    geminiCandidates.add(RouteCandidate(AiProvider.GEMINI, modelId, key))
+                    geminiCandidates.add(RouteCandidate(AiProvider.GEMINI, effectiveModel, key))
                 }
             }
         }
 
         val openRouterCandidates = mutableListOf<RouteCandidate>()
-        // 1 OpenRouter key cascades across every free model in priority order
         for (key in openRouterKeys) {
             for (freeModel in openRouterModels) {
                 val rKey = routeKey(key.id, freeModel)
@@ -214,21 +315,38 @@ class BrainRouter(
             }
         }
 
-        val combined = if (config.primaryProvider == AiProvider.GEMINI) {
-            geminiCandidates + openRouterCandidates
-        } else {
-            openRouterCandidates + geminiCandidates
+        val universalCandidates = mutableListOf<RouteCandidate>()
+        for (key in universalKeys) {
+            val modelId = resolveModelForKey(key, config)
+            val rKey = routeKey(key.id, modelId)
+            val modelWait = routeCooldownMap[rKey] ?: 0L
+            if (key.cooldownUntilEpochMs <= nowMs && modelWait <= nowMs) {
+                universalCandidates.add(RouteCandidate(key.provider, modelId, key))
+            }
         }
 
-        if (combined.isNotEmpty()) {
-            return combined.take(config.maxAttemptsPerCall.coerceAtLeast(1))
+        val allOrdered = when (config.primaryProvider) {
+            AiProvider.GEMINI -> geminiCandidates + openRouterCandidates + universalCandidates
+            AiProvider.OPENROUTER -> openRouterCandidates + geminiCandidates + universalCandidates
+            else -> {
+                val prioritized = universalCandidates.filter { it.provider == config.primaryProvider }
+                val otherUniversal = universalCandidates.filter { it.provider != config.primaryProvider }
+                prioritized + geminiCandidates + openRouterCandidates + otherUniversal
+            }
         }
 
-        // Emergency fallback if everything is in cooldown: pick any enabled keys & models
+        if (allOrdered.isNotEmpty()) {
+            return allOrdered.take(config.maxAttemptsPerCall.coerceAtLeast(1))
+        }
+
+        // Emergency fallback if everything is cooling down
         val fallback = mutableListOf<RouteCandidate>()
         geminiKeys.forEach { fallback.add(RouteCandidate(AiProvider.GEMINI, geminiModels.first(), it)) }
         openRouterKeys.forEach { key ->
             openRouterModels.forEach { m -> fallback.add(RouteCandidate(AiProvider.OPENROUTER, m, key)) }
+        }
+        universalKeys.forEach { key ->
+            fallback.add(RouteCandidate(key.provider, resolveModelForKey(key, config), key))
         }
         return fallback.take(config.maxAttemptsPerCall.coerceAtLeast(1))
     }

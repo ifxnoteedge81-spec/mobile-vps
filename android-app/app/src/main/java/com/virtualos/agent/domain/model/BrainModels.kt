@@ -3,9 +3,60 @@ package com.virtualos.agent.domain.model
 import kotlinx.serialization.Serializable
 
 @Serializable
-enum class AiProvider {
-    GEMINI,
-    OPENROUTER
+enum class AiProvider(
+    val displayName: String,
+    val envVarName: String,
+    val defaultBaseUrl: String,
+    val defaultModel: String
+) {
+    GEMINI(
+        displayName = "Google Gemini",
+        envVarName = "GEMINI_API_KEY",
+        defaultBaseUrl = "https://generativelanguage.googleapis.com",
+        defaultModel = "gemini-2.5-flash"
+    ),
+    OPENROUTER(
+        displayName = "OpenRouter",
+        envVarName = "OPENROUTER_API_KEY",
+        defaultBaseUrl = "https://openrouter.ai/api/v1",
+        defaultModel = "google/gemini-2.0-flash-exp:free"
+    ),
+    OPENAI(
+        displayName = "OpenAI (GPT)",
+        envVarName = "OPENAI_API_KEY",
+        defaultBaseUrl = "https://api.openai.com/v1",
+        defaultModel = "gpt-4o-mini"
+    ),
+    ANTHROPIC(
+        displayName = "Anthropic (Claude)",
+        envVarName = "ANTHROPIC_API_KEY",
+        defaultBaseUrl = "https://api.anthropic.com/v1",
+        defaultModel = "claude-3-5-haiku-latest"
+    ),
+    GROQ(
+        displayName = "Groq Cloud",
+        envVarName = "GROQ_API_KEY",
+        defaultBaseUrl = "https://api.groq.com/openai/v1",
+        defaultModel = "llama-3.3-70b-versatile"
+    ),
+    DEEPSEEK(
+        displayName = "DeepSeek",
+        envVarName = "DEEPSEEK_API_KEY",
+        defaultBaseUrl = "https://api.deepseek.com",
+        defaultModel = "deepseek-chat"
+    ),
+    MISTRAL(
+        displayName = "Mistral AI",
+        envVarName = "MISTRAL_API_KEY",
+        defaultBaseUrl = "https://api.mistral.ai/v1",
+        defaultModel = "mistral-small-latest"
+    ),
+    CUSTOM_OPENAI(
+        displayName = "Custom AI (OpenAI Compatible)",
+        envVarName = "CUSTOM_AI_API_KEY",
+        defaultBaseUrl = "",
+        defaultModel = "default"
+    )
 }
 
 @Serializable
@@ -22,6 +73,8 @@ data class ApiKeyEntry(
     val provider: AiProvider,
     val apiKey: String,
     val accountHint: String = "",
+    val customBaseUrl: String = "",
+    val modelOverride: String = "",
     val enabled: Boolean = true,
     val cooldownUntilEpochMs: Long = 0L,
     val failureCount: Int = 0,
@@ -46,7 +99,7 @@ data class BrainRouterConfig(
         "qwen/qwen-2.5-72b-instruct:free",
         "mistralai/mistral-small-3.1-24b-instruct:free"
     ),
-    val maxAttemptsPerCall: Int = 12,
+    val maxAttemptsPerCall: Int = 16,
     val keyCooldownSeconds: Int = 65,
     val modelCooldownSeconds: Int = 90
 )
@@ -80,5 +133,7 @@ data class RouteDiagnosticResult(
     val modelId: String,
     val ok: Boolean,
     val latencyMs: Long,
-    val message: String
+    val message: String,
+    val keyId: String = "",
+    val envVarName: String = provider.envVarName
 )

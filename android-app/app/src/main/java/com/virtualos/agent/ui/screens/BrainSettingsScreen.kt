@@ -35,6 +35,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.virtualos.agent.domain.model.AiProvider
+import com.virtualos.agent.domain.model.ApiKeyEntry
+import com.virtualos.agent.domain.model.RouteDiagnosticResult
 import com.virtualos.agent.ui.viewmodel.MainAgentViewModel
 
 @Composable
@@ -287,6 +289,22 @@ fun BrainSettingsScreen(viewModel: MainAgentViewModel) {
             }
         }
 
+        // 3b. Universal AI Connectors & Environment Variables (OpenAI, Claude, Groq, DeepSeek, Mistral, Custom)
+        UniversalAiConnectorsCard(
+            apiKeys = apiKeys,
+            primaryProvider = config.primaryProvider,
+            diagnostics = diagnostics,
+            diagnosticsRunning = diagnosticsRunning,
+            onSetPrimaryProvider = { p ->
+                viewModel.updateRouterConfig(config.copy(primaryProvider = p))
+            },
+            onSaveConnector = { label, provider, key, baseUrl, model ->
+                viewModel.upsertUniversalConnector(label, provider, key, baseUrl, model)
+            },
+            onTestKey = { keyId -> viewModel.testSingleKey(keyId) },
+            onRemoveKey = { keyId -> viewModel.removeApiKey(keyId) }
+        )
+
         // 4. Agent Skills & Safety Policies
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -401,6 +419,226 @@ fun BrainSettingsScreen(viewModel: MainAgentViewModel) {
 }
 
 @Composable
+private fun UniversalAiConnectorsCard(
+    apiKeys: List<ApiKeyEntry>,
+    primaryProvider: AiProvider,
+    diagnostics: List<RouteDiagnosticResult>,
+    diagnosticsRunning: Boolean,
+    onSetPrimaryProvider: (AiProvider) -> Unit,
+    onSaveConnector: (String, AiProvider, String, String, String) -> Unit,
+    onTestKey: (String) -> Unit,
+    onRemoveKey: (String) -> Unit
+) {
+    val universalProviders = remember {
+        listOf(
+            AiProvider.OPENAI,
+            AiProvider.ANTHROPIC,
+            AiProvider.GROQ,
+            AiProvider.DEEPSEEK,
+            AiProvider.MISTRAL,
+            AiProvider.CUSTOM_OPENAI
+        )
+    }
+    var selectedProvider by remember { mutableStateOf(AiProvider.OPENAI) }
+    var connectorLabel by remember(selectedProvider) { mutableStateOf(selectedProvider.displayName) }
+    var baseUrlInput by remember(selectedProvider) { mutableStateOf(selectedProvider.defaultBaseUrl) }
+    var modelInput by remember(selectedProvider) { mutableStateOf(selectedProvider.defaultModel) }
+    var apiKeyInput by remember(selectedProvider) { mutableStateOf("") }
+
+    val configuredKeys = remember(apiKeys) {
+        apiKeys.filter { it.provider != AiProvider.GEMINI && it.provider != AiProvider.OPENROUTER }
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "Universal AI Connectors & Env Variables",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                "Connect OpenAI, Claude, Groq, DeepSeek, Mistral, or ANY Custom OpenAI-compatible AI server (Ollama / xAI / vLLM) and test each endpoint individually.",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Text("Primary Routing Priority", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                AiProvider.entries.forEach { p ->
+                    val isSelected = primaryProvider == p
+                    OutlinedButton(
+                        onClick = { onSetPrimaryProvider(p) },
+                        colors = if (isSelected) {
+                            ButtonDefaults.outlinedButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        } else {
+                            ButtonDefaults.outlinedButtonColors()
+                        }
+                    ) {
+                        Text(p.displayName, maxLines = 1)
+                    }
+                }
+            }
+
+            HorizontalDivider()
+            Text("Add / Update AI Connector", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                universalProviders.forEach { p ->
+                    val isSelected = selectedProvider == p
+                    OutlinedButton(
+                        onClick = { selectedProvider = p },
+                        colors = if (isSelected) {
+                            ButtonDefaults.outlinedButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        } else {
+                            ButtonDefaults.outlinedButtonColors()
+                        }
+                    ) {
+                        Text(p.displayName, maxLines = 1)
+                    }
+                }
+            }
+
+            OutlinedTextField(
+                value = connectorLabel,
+                onValueChange = { connectorLabel = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Connector Label (${selectedProvider.envVarName})") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = baseUrlInput,
+                onValueChange = { baseUrlInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("API Base URL (https://...)") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = modelInput,
+                onValueChange = { modelInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Model ID") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = apiKeyInput,
+                onValueChange = { apiKeyInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("${selectedProvider.envVarName} (AES-256 Encrypted)") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true
+            )
+            Button(
+                onClick = {
+                    if (apiKeyInput.isNotBlank()) {
+                        onSaveConnector(
+                            connectorLabel,
+                            selectedProvider,
+                            apiKeyInput,
+                            baseUrlInput,
+                            modelInput
+                        )
+                        apiKeyInput = ""
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save ${selectedProvider.displayName} (AES-256)")
+            }
+
+            if (configuredKeys.isNotEmpty()) {
+                HorizontalDivider()
+                Text("Configured Universal Connectors", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                configuredKeys.forEach { entry ->
+                    val diag = diagnostics.firstOrNull { it.keyId == entry.id }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "${entry.label} · ${entry.provider.envVarName}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    "Model: ${entry.modelOverride.ifBlank { entry.provider.defaultModel }}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = { onTestKey(entry.id) },
+                                    enabled = !diagnosticsRunning
+                                ) {
+                                    Text("Test")
+                                }
+                                OutlinedButton(onClick = { onRemoveKey(entry.id) }) {
+                                    Text("Remove")
+                                }
+                            }
+                        }
+                        if (diag != null) {
+                            Text(
+                                text = "${if (diag.ok) "OK" else "FAIL"} (${diag.latencyMs}ms) · ${diag.message}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (diag.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider()
+            Text("Server & Android Environment Variable Checklist", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+            AiProvider.entries.forEach { provider ->
+                val isConfigured = apiKeys.any { it.provider == provider && it.enabled && it.apiKey.isNotBlank() }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        provider.envVarName,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        if (isConfigured) "CONFIGURED" else "NOT SET",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SkillSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -411,3 +649,4 @@ private fun SkillSwitchRow(label: String, checked: Boolean, onCheckedChange: (Bo
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
+

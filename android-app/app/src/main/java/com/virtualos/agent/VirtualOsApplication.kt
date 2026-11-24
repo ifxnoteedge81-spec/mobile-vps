@@ -7,9 +7,11 @@ import android.os.Build
 import com.virtualos.agent.agent.AgentOrchestrator
 import com.virtualos.agent.agent.GuardrailEngine
 import com.virtualos.agent.agent.LowMemoryMonitor
+import com.virtualos.agent.brain.AnthropicClient
 import com.virtualos.agent.brain.BrainRouter
 import com.virtualos.agent.brain.GeminiClient
 import com.virtualos.agent.brain.OpenRouterClient
+import com.virtualos.agent.brain.UniversalOpenAiClient
 import com.virtualos.agent.data.queue.TaskQueueDatabase
 import com.virtualos.agent.data.security.EncryptedVaultStore
 import com.virtualos.agent.data.workspace.SandboxedWorkspaceManager
@@ -75,7 +77,15 @@ class VirtualOsApplication : Application() {
 
         val geminiClient = GeminiClient(httpClient)
         val openRouterClient = OpenRouterClient(httpClient)
-        brainRouter = BrainRouter(vaultStore, geminiClient, openRouterClient)
+        val universalOpenAiClient = UniversalOpenAiClient(httpClient)
+        val anthropicClient = AnthropicClient(httpClient)
+        brainRouter = BrainRouter(
+            vaultStore = vaultStore,
+            geminiClient = geminiClient,
+            openRouterClient = openRouterClient,
+            universalOpenAiClient = universalOpenAiClient,
+            anthropicClient = anthropicClient
+        )
 
         orchestrator = AgentOrchestrator(
             appContext = this,

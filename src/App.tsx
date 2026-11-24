@@ -13,6 +13,7 @@ import {
   RouterEventRecord,
   ScheduledTask,
   SkillPolicyConfig,
+  UniversalProviderId,
   UserProfileVault,
   VideoStudioState,
   VirtualAppItem,
@@ -110,6 +111,9 @@ function WorkbenchApp() {
   );
   const [geminiSlots, setGeminiSlots] = useState<GeminiAccountSlot[]>(() =>
     loadStored("karyo_gemini_slots", INITIAL_GEMINI_SLOTS)
+  );
+  const [preferredProvider, setPreferredProvider] = useState<UniversalProviderId>(() =>
+    loadStored("karyo_preferred_provider", "AUTO")
   );
   const [preferredModel, setPreferredModel] = useState<string>("gemini-4-hydrogen");
   const [openRouterFallbackModel, setOpenRouterFallbackModel] = useState<string>(
@@ -220,6 +224,9 @@ function WorkbenchApp() {
   useEffect(() => {
     localStorage.setItem("karyo_gemini_slots", JSON.stringify(geminiSlots));
   }, [geminiSlots]);
+  useEffect(() => {
+    localStorage.setItem("karyo_preferred_provider", JSON.stringify(preferredProvider));
+  }, [preferredProvider]);
   useEffect(() => {
     localStorage.setItem("karyo_scheduled_tasks", JSON.stringify(scheduledTasks));
   }, [scheduledTasks]);
@@ -972,6 +979,7 @@ function WorkbenchApp() {
             stepIndex: step,
             observation: obs,
             recentHistory,
+            preferredProvider,
             preferredModel,
             simulateRateLimit,
             activeGeminiSlotCount: enabledGeminiCount,
@@ -1362,6 +1370,8 @@ function WorkbenchApp() {
             onUpdateVirtualProfile={setVirtualProfile}
             geminiSlots={geminiSlots}
             onUpdateGeminiSlots={setGeminiSlots}
+            preferredProvider={preferredProvider}
+            onChangePreferredProvider={setPreferredProvider}
             preferredModel={preferredModel}
             onChangePreferredModel={setPreferredModel}
             openRouterFallbackModel={openRouterFallbackModel}

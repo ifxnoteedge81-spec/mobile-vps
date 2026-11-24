@@ -135,14 +135,38 @@ class MainAgentViewModel(application: Application) : AndroidViewModel(applicatio
     fun saveFiveGeminiKeys(entries: List<Triple<String, String, String>>) =
         app.vaultStore.upsertBatchGeminiKeys(entries)
 
-    fun addApiKey(label: String, provider: AiProvider, key: String, accountHint: String = "") =
-        app.vaultStore.addApiKey(label, provider, key, accountHint)
+    fun addApiKey(
+        label: String,
+        provider: AiProvider,
+        key: String,
+        accountHint: String = "",
+        customBaseUrl: String = "",
+        modelOverride: String = ""
+    ) = app.vaultStore.addApiKey(label, provider, key, accountHint, customBaseUrl, modelOverride)
+
+    fun upsertUniversalConnector(
+        label: String,
+        provider: AiProvider,
+        key: String,
+        customBaseUrl: String,
+        modelOverride: String
+    ) = app.vaultStore.upsertProviderConnector(label, provider, key, customBaseUrl, modelOverride)
 
     fun removeApiKey(id: String) = app.vaultStore.removeApiKey(id)
 
     fun resetAllCooldowns() = app.brainRouter.clearRouteCooldowns()
 
     fun updateRouterConfig(config: BrainRouterConfig) = app.vaultStore.updateRouterConfig(config)
+
+    fun testSingleKey(keyId: String) {
+        viewModelScope.launch {
+            _diagnosticsRunning.value = true
+            val result = app.brainRouter.testSingleKey(keyId)
+            _routeDiagnostics.value = listOf(result) +
+                _routeDiagnostics.value.filterNot { it.keyId == keyId }
+            _diagnosticsRunning.value = false
+        }
+    }
 
     fun runRouteDiagnostics() {
         viewModelScope.launch {

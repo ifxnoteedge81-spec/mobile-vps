@@ -87,19 +87,61 @@ class EncryptedVaultStore(context: Context) {
         label: String,
         provider: AiProvider,
         rawKey: String,
-        accountHint: String = ""
+        accountHint: String = "",
+        customBaseUrl: String = "",
+        modelOverride: String = ""
     ) {
         val trimmed = rawKey.trim()
         if (trimmed.isBlank()) return
         val existingCount = _apiKeys.value.count { it.provider == provider }
         val updated = _apiKeys.value + ApiKeyEntry(
             id = UUID.randomUUID().toString(),
-            label = label.ifBlank { "${provider.name} #${existingCount + 1}" },
+            label = label.ifBlank { "${provider.displayName} #${existingCount + 1}" },
             provider = provider,
             apiKey = trimmed,
             accountHint = accountHint.trim(),
+            customBaseUrl = customBaseUrl.trim(),
+            modelOverride = modelOverride.trim(),
             enabled = true
         )
+        persistApiKeys(updated)
+    }
+
+    fun upsertProviderConnector(
+        label: String,
+        provider: AiProvider,
+        rawKey: String,
+        customBaseUrl: String = "",
+        modelOverride: String = ""
+    ) {
+        val trimmedKey = rawKey.trim()
+        if (trimmedKey.isBlank()) return
+        val cleanBase = customBaseUrl.trim()
+        val cleanModel = modelOverride.trim()
+        val existing = _apiKeys.value.firstOrNull {
+            it.provider == provider &&
+                (provider != AiProvider.CUSTOM_OPENAI || it.customBaseUrl.equals(cleanBase, ignoreCase = true))
+        }
+        val entry = existing?.copy(
+            label = label.ifBlank { existing.label },
+            apiKey = trimmedKey,
+            customBaseUrl = cleanBase.ifBlank { provider.defaultBaseUrl },
+            modelOverride = cleanModel.ifBlank { provider.defaultModel },
+            enabled = true,
+            cooldownUntilEpochMs = 0L,
+            healthStatus = KeyHealthStatus.READY,
+            lastError = null
+        ) ?: ApiKeyEntry(
+            id = UUID.randomUUID().toString(),
+            label = label.ifBlank { provider.displayName },
+            provider = provider,
+            apiKey = trimmedKey,
+            accountHint = provider.envVarName,
+            customBaseUrl = cleanBase.ifBlank { provider.defaultBaseUrl },
+            modelOverride = cleanModel.ifBlank { provider.defaultModel },
+            enabled = true
+        )
+        val updated = _apiKeys.value.filterNot { existing != null && it.id == existing.id } + entry
         persistApiKeys(updated)
     }
 

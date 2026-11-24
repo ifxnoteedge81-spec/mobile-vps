@@ -27,13 +27,16 @@ jobs:
           gradle-version: 8.9
 
       - name: Build Debug & Release APKs
-        run: gradle assembleDebug assembleRelease --no-daemon
+        run: |
+          gradle assembleDebug assembleRelease --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/KaryoOS-Agent.apk
 
       - name: Upload APK Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: KaryoOSAgent-APKs
           path: |
+            app/build/outputs/apk/KaryoOS-Agent.apk
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk
 
@@ -43,6 +46,7 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: KaryoOS Agent v1.0.${{ github.run_number }}
           files: |
+            app/build/outputs/apk/KaryoOS-Agent.apk
             app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/apk/release/app-release-unsigned.apk
         env:

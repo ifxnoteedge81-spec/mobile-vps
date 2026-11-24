@@ -246,3 +246,34 @@ export interface RouterEventRecord {
   to: string;
   reason: string;
 }
+
+export type UniversalProviderId =
+  | "AUTO"
+  | "GEMINI"
+  | "OPENROUTER"
+  | "OPENAI"
+  | "ANTHROPIC"
+  | "GROQ"
+  | "DEEPSEEK"
+  | "MISTRAL"
+  | "CUSTOM";
+
+export interface EnvSlotStatus {
+  slotId: string;
+  providerId: Exclude<UniversalProviderId, "AUTO">;
+  envVarName: string;
+  label: string;
+  endpointHost: string;
+  defaultModel: string;
+  configured: boolean;
+}
+
+export interface EnvTestResult {
+  ok: boolean;
+  slotId: string;
+  envVarName: string;
+  modelId: string;
+  latencyMs: number;
+  message: string;
+}
+
