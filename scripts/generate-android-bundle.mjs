@@ -87,11 +87,19 @@ async function prepareApkManifest() {
         );
         if (asset?.browser_download_url) {
           releaseApkUrl = asset.browser_download_url;
-          const apkRes = await fetch(asset.browser_download_url);
-          if (apkRes.ok) {
-            const buf = Buffer.from(await apkRes.arrayBuffer());
-            fs.writeFileSync(localApkFile, buf);
-            console.log(`Fetched release APK (${buf.length} bytes) into public/KaryoOS-Agent.apk`);
+          const apkController = new AbortController();
+          const apkTimeout = setTimeout(() => apkController.abort(), 10000);
+          try {
+            const apkRes = await fetch(asset.browser_download_url, {
+              signal: apkController.signal,
+            });
+            if (apkRes.ok) {
+              const buf = Buffer.from(await apkRes.arrayBuffer());
+              fs.writeFileSync(localApkFile, buf);
+              console.log(`Fetched release APK (${buf.length} bytes) into public/KaryoOS-Agent.apk`);
+            }
+          } finally {
+            clearTimeout(apkTimeout);
           }
         }
       }
